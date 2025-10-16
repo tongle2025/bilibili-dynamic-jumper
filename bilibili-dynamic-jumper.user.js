@@ -2,9 +2,9 @@
 // @name         B站动态日期跳转助手
 // @name:en      Bilibili Dynamic Time Jumper
 // @namespace    https://github.com/tongle2025/bilibili-dynamic-jumper
-// @version      1.0.0
-// @description  快速跳转到B站UP主指定年月的动态,支持自定义滚动参数和重试次数,适合查找历史动态
-// @description:en Quickly jump to Bilibili UP master's dynamics at specified year and month
+// @version      1.0.1
+// @description  快速跳转到B站UP主指定年月日的动态,支持自定义滚动参数和重试次数,适合查找历史动态
+// @description:en Quickly jump to Bilibili UP master's dynamics at specified date
 // @author       Sakurakid
 // @match        https://space.bilibili.com/*/dynamic
 // @icon         https://www.bilibili.com/favicon.ico
@@ -23,6 +23,7 @@
     let isSearching = false;
     let targetYear = null;
     let targetMonth = null;
+    let targetDay = null; // 新增:目标日期(可选)
     let currentRetries = 0;
     let lastDynamicCount = 0;
     let totalScrolls = 0;
@@ -42,7 +43,7 @@
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;
                             border-bottom: 2px solid #00a1d6; padding-bottom: 10px;">
                     <h3 style="margin: 0; font-size: 17px; color: #333;">
-                        📅 动态时间跳转 v1.0.0
+                        📅 动态时间跳转 v1.0.1
                     </h3>
                     <button id="hide-panel" style="background: transparent; border: none; cursor: pointer;
                                                     font-size: 18px; color: #999; padding: 4px 8px;
@@ -61,7 +62,7 @@
                                    border-radius: 6px; font-size: 14px;">
                     </select>
                 </div>
-                <div style="margin-bottom: 15px;">
+                <div style="margin-bottom: 12px;">
                     <label style="display: block; margin-bottom: 5px; font-size: 14px; color: #666; font-weight: 500;">
                         目标月份:
                     </label>
@@ -81,6 +82,19 @@
                         <option value="11">11月</option>
                         <option value="12">12月</option>
                     </select>
+                </div>
+                <div style="margin-bottom: 15px;">
+                    <label style="display: block; margin-bottom: 5px; font-size: 14px; color: #666; font-weight: 500;">
+                        目标日期 (可选):
+                    </label>
+                    <select id="target-day"
+                            style="width: 100%; padding: 8px; border: 1px solid #ddd;
+                                   border-radius: 6px; font-size: 14px;">
+                        <option value="">不指定具体日期</option>
+                    </select>
+                    <div style="font-size: 11px; color: #999; margin-top: 4px;">
+                        留空则匹配整个月的动态,指定则精确到具体某天
+                    </div>
                 </div>
 
                 <!-- 高级设置(可折叠) -->
@@ -194,7 +208,7 @@
                     <strong>💡 使用技巧:</strong><br>
                     • 搜索早期动态(如2019年)需要较长时间,请耐心等待<br>
                     • 如果长时间无进展,尝试增加"最大重试次数"或使用"极限"滚动模式<br>
-                    • 滚动过快或过多可能会触发b站机制，需要手动过一下验证，无其他影响<br>
+                    • 滚动过快或过多可能会触发b站机制,需要手动过一下验证,无其他影响<br>
                     • 观察"当前位置"来判断搜索进度
                 </div>
             </div>
@@ -210,6 +224,40 @@
             option.textContent = year + '年';
             yearSelect.appendChild(option);
         }
+
+        // 填充日期选项(1-31日)
+        const daySelect = document.getElementById('target-day');
+        for (let day = 1; day <= 31; day++) {
+            const option = document.createElement('option');
+            option.value = day;
+            option.textContent = day + '日';
+            daySelect.appendChild(option);
+        }
+
+        // 监听年月变化,动态调整可选日期范围
+        function updateDayOptions() {
+            const year = parseInt(yearSelect.value);
+            const month = parseInt(document.getElementById('target-month').value);
+            const daysInMonth = new Date(year, month, 0).getDate();
+
+            // 移除超出当月天数的选项
+            const options = daySelect.querySelectorAll('option');
+            options.forEach(option => {
+                if (option.value && parseInt(option.value) > daysInMonth) {
+                    option.style.display = 'none';
+                } else {
+                    option.style.display = 'block';
+                }
+            });
+
+            // 如果当前选中的日期超出范围,重置为空
+            if (daySelect.value && parseInt(daySelect.value) > daysInMonth) {
+                daySelect.value = '';
+            }
+        }
+
+        yearSelect.addEventListener('change', updateDayOptions);
+        document.getElementById('target-month').addEventListener('change', updateDayOptions);
 
         // 绑定事件
         document.getElementById('start-jump').addEventListener('click', startJump);
@@ -299,8 +347,13 @@
     function startJump() {
         targetYear = parseInt(document.getElementById('target-year').value);
         targetMonth = parseInt(document.getElementById('target-month').value);
+        const dayValue = document.getElementById('target-day').value;
+        targetDay = dayValue ? parseInt(dayValue) : null; // 如果没选择日期则为null
 
-        debugLog(`========== 开始搜索: ${targetYear}年${targetMonth}月 ==========`);
+        const targetDesc = targetDay
+            ? `${targetYear}年${targetMonth}月${targetDay}日`
+            : `${targetYear}年${targetMonth}月`;
+        debugLog(`========== 开始搜索: ${targetDesc} ==========`);
 
         // 读取用户设置的参数
         const maxRetries = parseInt(document.getElementById('max-retries').value);
@@ -464,7 +517,10 @@
                 highlightTargetDynamic(result.targetCard);
                 stopJump();
                 const d = result.targetDate;
-                alert(`🎉 找到目标动态!\n\n时间: ${d.year}年${d.month}月${d.day}日\n\n已为您高亮显示该动态。`);
+                const dateStr = targetDay
+                    ? `${d.year}年${d.month}月${d.day}日`
+                    : `${d.year}年${d.month}月`;
+                alert(`🎉 找到目标动态!\n\n时间: ${dateStr}\n\n已为您高亮显示该动态。`);
                 return;
             } else if (result.passed) {
                 handlePassedTarget(result);
@@ -480,33 +536,66 @@
         setTimeout(autoScroll, 500);
     }
 
+    // 关键修复:分析动态数组,查找目标
     function analyzeDynamics(dynamicCards) {
         const checkCount = Math.min(20, dynamicCards.length);
         let latestDate = null;
         let targetCard = null;
         let targetDate = null;
 
+        // 从后往前检查(新到旧)
         for (let i = dynamicCards.length - 1; i >= dynamicCards.length - checkCount && i >= 0; i--) {
             const card = dynamicCards[i];
             const dateInfo = extractDateInfo(card);
 
             if (!dateInfo) continue;
 
+            // 记录最新(最靠后)的日期
             if (!latestDate || dateInfo.timestamp > latestDate.timestamp) {
                 latestDate = dateInfo;
             }
 
-            if (dateInfo.year === targetYear && dateInfo.month === targetMonth) {
+            // 检查是否匹配目标
+            let isMatch = false;
+            if (targetDay) {
+                // 如果指定了具体日期,需要年月日都匹配
+                isMatch = dateInfo.year === targetYear && 
+                         dateInfo.month === targetMonth && 
+                         dateInfo.day === targetDay;
+                debugLog(`检查动态 #${i}: ${dateInfo.year}-${dateInfo.month}-${dateInfo.day}, 目标: ${targetYear}-${targetMonth}-${targetDay}, 匹配: ${isMatch}`);
+            } else {
+                // 如果没指定日期,只需要年月匹配
+                isMatch = dateInfo.year === targetYear && 
+                         dateInfo.month === targetMonth;
+                debugLog(`检查动态 #${i}: ${dateInfo.year}-${dateInfo.month}, 目标: ${targetYear}-${targetMonth}, 匹配: ${isMatch}`);
+            }
+
+            if (isMatch) {
                 targetCard = card;
                 targetDate = dateInfo;
-                debugLog(`🎯 找到目标! ${dateInfo.year}年${dateInfo.month}月${dateInfo.day}日`);
+                const dateStr = targetDay 
+                    ? `${dateInfo.year}年${dateInfo.month}月${dateInfo.day}日`
+                    : `${dateInfo.year}年${dateInfo.month}月`;
+                debugLog(`🎯 找到目标! ${dateStr}`);
                 return { found: true, targetCard, targetDate, latestDate };
             }
 
-            if (dateInfo.year < targetYear ||
-                (dateInfo.year === targetYear && dateInfo.month < targetMonth)) {
-                debugLog(`⚠️ 已超过目标时间: ${dateInfo.year}年${dateInfo.month}月`);
-                return { found: false, passed: true, passedDate: dateInfo, latestDate };
+            // 检查是否已超过目标(时间更早)
+            if (targetDay) {
+                // 指定了日期的情况:需要比较到日
+                if (dateInfo.year < targetYear || 
+                    (dateInfo.year === targetYear && dateInfo.month < targetMonth) ||
+                    (dateInfo.year === targetYear && dateInfo.month === targetMonth && dateInfo.day < targetDay)) {
+                    debugLog(`⚠️ 已超过目标时间: ${dateInfo.year}年${dateInfo.month}月${dateInfo.day}日`);
+                    return { found: false, passed: true, passedDate: dateInfo, latestDate };
+                }
+            } else {
+                // 未指定日期的情况:只比较到月
+                if (dateInfo.year < targetYear || 
+                    (dateInfo.year === targetYear && dateInfo.month < targetMonth)) {
+                    debugLog(`⚠️ 已超过目标时间: ${dateInfo.year}年${dateInfo.month}月`);
+                    return { found: false, passed: true, passedDate: dateInfo, latestDate };
+                }
             }
         }
 
@@ -522,9 +611,12 @@
             const lastDate = extractDateInfo(lastCard);
 
             if (lastDate) {
+                const targetDesc = targetDay
+                    ? `${targetYear}年${targetMonth}月${targetDay}日`
+                    : `${targetYear}年${targetMonth}月`;
                 const msg = `📍 已达到搜索限制\n\n` +
                            `最早动态: ${lastDate.year}年${lastDate.month}月${lastDate.day}日\n` +
-                           `目标时间: ${targetYear}年${targetMonth}月\n` +
+                           `目标时间: ${targetDesc}\n` +
                            `已加载动态: ${dynamicCards.length}条\n\n` +
                            `可能原因:\n` +
                            `• 该UP主在目标时间未发布动态\n` +
@@ -546,7 +638,10 @@
     function handlePassedTarget(result) {
         stopJump();
         const d = result.passedDate;
-        alert(`⚠️ 已超过目标时间\n\n当前位置: ${d.year}年${d.month}月${d.day}日\n目标时间: ${targetYear}年${targetMonth}月\n\n在当前位置附近未找到${targetYear}年${targetMonth}月的动态。\n\n建议: 可以尝试手动向上滚动查找,或者该UP主在目标月份可能没有发动态。`);
+        const targetDesc = targetDay
+            ? `${targetYear}年${targetMonth}月${targetDay}日`
+            : `${targetYear}年${targetMonth}月`;
+        alert(`⚠️ 已超过目标时间\n\n当前位置: ${d.year}年${d.month}月${d.day}日\n目标时间: ${targetDesc}\n\n在当前位置附近未找到目标时间的动态。\n\n建议: 可以尝试手动向上滚动查找,或者该UP主在目标时间可能没有发动态。`);
     }
 
     function extractDateInfo(dynamicCard) {
@@ -732,8 +827,8 @@
     init();
 
     debugLog('========================================');
-    debugLog('B站动态日期跳转助手 v1.0.0 已启动');
-    debugLog('新特性: 可自定义滚动参数和重试次数');
+    debugLog('B站动态日期跳转助手 v1.0.1 已启动');
+    debugLog('新特性: 支持可选的具体日期匹配');
     debugLog('========================================');
-    console.log('%c[动态跳转] 脚本v1.0.0已加载! 现在支持自定义参数', 'color: #667eea; font-size: 14px; font-weight: bold; background: #f0f4ff; padding: 4px 8px; border-radius: 4px;');
+    console.log('%c[动态跳转] 脚本v1.0.1已加载! 现在支持精确到日期', 'color: #667eea; font-size: 14px; font-weight: bold; background: #f0f4ff; padding: 4px 8px; border-radius: 4px;');
 })();
