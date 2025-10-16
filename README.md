@@ -14,7 +14,7 @@
 
 1. 安装Tampermonkey浏览器扩展。
 
-2. 安装本脚本。[从Greasy Fork安装]()
+2. 安装本脚本。[从Greasy Fork安装](https://greasyfork.org/zh-CN/scripts/552739-b%E7%AB%99%E5%8A%A8%E6%80%81%E6%97%A5%E6%9C%9F%E8%B7%B3%E8%BD%AC%E5%8A%A9%E6%89%8B)
 
 ## 🚀 使用教程
 
