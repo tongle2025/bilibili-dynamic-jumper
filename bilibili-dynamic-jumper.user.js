@@ -2,11 +2,12 @@
 // @name         B站动态日期跳转助手
 // @name:en      Bilibili Dynamic Time Jumper
 // @namespace    https://github.com/tongle2025/bilibili-dynamic-jumper
-// @version      1.0.2
+// @version      1.0.3
 // @description  快速跳转到B站UP主指定年月日的动态,支持自定义滚动参数和重试次数,适合查找历史动态
 // @description:en Quickly jump to Bilibili UP master's dynamics at specified date
 // @author       Sakurakid
 // @match        https://space.bilibili.com/*/dynamic
+// @match        https://t.bilibili.com/*
 // @icon         https://www.bilibili.com/favicon.ico
 // @grant        none
 // @license      MIT
@@ -26,11 +27,93 @@
     let lastDynamicCount = 0;
     let totalScrolls = 0;
 
+    // 设置存储的键名
+    const STORAGE_KEY = 'bilibili_dynamic_jumper_settings';
+
     function debugLog(...args) {
         console.log('[动态跳转]', ...args);
     }
 
+    // 保存设置到localStorage
+    function saveSettings() {
+        try {
+            const settings = {
+                maxRetries: document.getElementById('max-retries').value,
+                scrollDelay: document.getElementById('scroll-delay').value,
+                scrollAggressiveness: document.getElementById('scroll-aggressiveness').value,
+                extraScroll: document.getElementById('extra-scroll').value
+            };
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+            debugLog('设置已保存', settings);
+        } catch (e) {
+            debugLog('保存设置失败:', e);
+        }
+    }
+
+    // 从localStorage加载设置
+    function loadSettings() {
+        try {
+            const saved = localStorage.getItem(STORAGE_KEY);
+            if (saved) {
+                const settings = JSON.parse(saved);
+                debugLog('加载已保存的设置', settings);
+                return settings;
+            }
+        } catch (e) {
+            debugLog('加载设置失败:', e);
+        }
+        return null;
+    }
+
     function createControlPanel() {
+        // 先创建最小化的圆形按钮
+        createMinimizedButton();
+    }
+
+    // 创建最小化按钮(默认状态)
+    function createMinimizedButton() {
+        const showBtn = document.createElement('button');
+        showBtn.id = 'show-panel-btn';
+        showBtn.innerHTML = '📅';
+        showBtn.title = '显示动态跳转面板';
+        showBtn.style.cssText = `
+            position: fixed;
+            top: 80px;
+            right: 20px;
+            z-index: 10000;
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.5);
+            transition: transform 0.2s, box-shadow 0.2s;
+        `;
+
+        showBtn.addEventListener('click', () => {
+            showBtn.remove();
+            createExpandedPanel();
+        });
+
+        showBtn.addEventListener('mouseenter', () => {
+            showBtn.style.transform = 'scale(1.1)';
+            showBtn.style.boxShadow = '0 6px 16px rgba(102, 126, 234, 0.6)';
+        });
+
+        showBtn.addEventListener('mouseleave', () => {
+            showBtn.style.transform = 'scale(1)';
+            showBtn.style.boxShadow = '0 4px 12px rgba(102, 126, 234, 0.5)';
+        });
+
+        document.body.appendChild(showBtn);
+        debugLog('最小化按钮已创建');
+    }
+
+    // 创建展开的完整面板
+    function createExpandedPanel() {
         const panel = document.createElement('div');
         panel.id = 'dynamic-jumper-panel';
         panel.innerHTML = `
@@ -41,11 +124,11 @@
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;
                             border-bottom: 2px solid #00a1d6; padding-bottom: 10px;">
                     <h3 style="margin: 0; font-size: 17px; color: #333;">
-                        📅 动态时间跳转 v1.0.1
+                        📅 动态时间跳转 v1.0.3
                     </h3>
                     <button id="hide-panel" style="background: transparent; border: none; cursor: pointer;
                                                     font-size: 18px; color: #999; padding: 4px 8px;
-                                                    transition: color 0.2s;" title="隐藏面板">
+                                                    transition: color 0.2s;" title="最小化面板">
                         ✕
                     </button>
                 </div>
@@ -257,6 +340,21 @@
         yearSelect.addEventListener('change', updateDayOptions);
         document.getElementById('target-month').addEventListener('change', updateDayOptions);
 
+        // 加载保存的设置
+        const savedSettings = loadSettings();
+        if (savedSettings) {
+            document.getElementById('max-retries').value = savedSettings.maxRetries || 10;
+            document.getElementById('scroll-delay').value = savedSettings.scrollDelay || 2000;
+            document.getElementById('scroll-aggressiveness').value = savedSettings.scrollAggressiveness || 'aggressive';
+            document.getElementById('extra-scroll').value = savedSettings.extraScroll || 2000;
+        }
+
+        // 绑定设置变化事件,自动保存
+        document.getElementById('max-retries').addEventListener('change', saveSettings);
+        document.getElementById('scroll-delay').addEventListener('change', saveSettings);
+        document.getElementById('scroll-aggressiveness').addEventListener('change', saveSettings);
+        document.getElementById('extra-scroll').addEventListener('change', saveSettings);
+
         // 绑定事件
         document.getElementById('start-jump').addEventListener('click', startJump);
         document.getElementById('stop-jump').addEventListener('click', stopJump);
@@ -265,45 +363,7 @@
         document.getElementById('hide-panel').addEventListener('click', () => {
             const panelDiv = document.getElementById('dynamic-jumper-panel').firstElementChild;
             panelDiv.style.display = 'none';
-
-            // 创建显示按钮
-            const showBtn = document.createElement('button');
-            showBtn.id = 'show-panel-btn';
-            showBtn.innerHTML = '📅';
-            showBtn.title = '显示动态跳转面板';
-            showBtn.style.cssText = `
-                position: fixed;
-                top: 80px;
-                right: 20px;
-                z-index: 10000;
-                width: 50px;
-                height: 50px;
-                border-radius: 50%;
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                color: white;
-                border: none;
-                font-size: 24px;
-                cursor: pointer;
-                box-shadow: 0 4px 12px rgba(102, 126, 234, 0.5);
-                transition: transform 0.2s, box-shadow 0.2s;
-            `;
-
-            showBtn.addEventListener('click', () => {
-                panelDiv.style.display = 'block';
-                showBtn.remove();
-            });
-
-            showBtn.addEventListener('mouseenter', () => {
-                showBtn.style.transform = 'scale(1.1)';
-                showBtn.style.boxShadow = '0 6px 16px rgba(102, 126, 234, 0.6)';
-            });
-
-            showBtn.addEventListener('mouseleave', () => {
-                showBtn.style.transform = 'scale(1)';
-                showBtn.style.boxShadow = '0 4px 12px rgba(102, 126, 234, 0.5)';
-            });
-
-            document.body.appendChild(showBtn);
+            createMinimizedButton();
         });
 
         // 隐藏按钮悬停效果
@@ -836,8 +896,8 @@
     init();
 
     debugLog('========================================');
-    debugLog('B站动态日期跳转助手 v1.0.2 已启动');
-    debugLog('新特性: 支持可选的具体日期匹配');
+    debugLog('B站动态日期跳转助手 v1.0.3 已启动');
+    debugLog('更新内容: 设置自动保存、默认最小化UI、逻辑优化');
     debugLog('========================================');
-    console.log('%c[动态跳转] 脚本v1.0.2已加载! 现在支持精确到日期', 'color: #667eea; font-size: 14px; font-weight: bold; background: #f0f4ff; padding: 4px 8px; border-radius: 4px;');
+    console.log('%c[动态跳转] 脚本v1.0.3已加载! 设置将自动保存', 'color: #667eea; font-size: 14px; font-weight: bold; background: #f0f4ff; padding: 4px 8px; border-radius: 4px;');
 })();
