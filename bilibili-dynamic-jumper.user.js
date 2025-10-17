@@ -2,7 +2,7 @@
 // @name         B站动态日期跳转助手
 // @name:en      Bilibili Dynamic Time Jumper
 // @namespace    https://github.com/tongle2025/bilibili-dynamic-jumper
-// @version      1.0.1
+// @version      1.0.2
 // @description  快速跳转到B站UP主指定年月日的动态,支持自定义滚动参数和重试次数,适合查找历史动态
 // @description:en Quickly jump to Bilibili UP master's dynamics at specified date
 // @author       Sakurakid
@@ -12,8 +12,6 @@
 // @license      MIT
 // @homepage     https://github.com/tongle2025/bilibili-dynamic-jumper
 // @supportURL   https://github.com/tongle2025/bilibili-dynamic-jumper/issues
-// @downloadURL https://update.greasyfork.org/scripts/552739/B%E7%AB%99%E5%8A%A8%E6%80%81%E6%97%A5%E6%9C%9F%E8%B7%B3%E8%BD%AC%E5%8A%A9%E6%89%8B.user.js
-// @updateURL https://update.greasyfork.org/scripts/552739/B%E7%AB%99%E5%8A%A8%E6%80%81%E6%97%A5%E6%9C%9F%E8%B7%B3%E8%BD%AC%E5%8A%A9%E6%89%8B.meta.js
 // ==/UserScript==
 
 (function() {
@@ -540,10 +538,11 @@
     function analyzeDynamics(dynamicCards) {
         const checkCount = Math.min(20, dynamicCards.length);
         let latestDate = null;
+        let oldestDate = null;
         let targetCard = null;
         let targetDate = null;
 
-        // 从后往前检查(新到旧)
+        // 第一遍:从后往前完整遍历,寻找匹配项
         for (let i = dynamicCards.length - 1; i >= dynamicCards.length - checkCount && i >= 0; i--) {
             const card = dynamicCards[i];
             const dateInfo = extractDateInfo(card);
@@ -555,50 +554,60 @@
                 latestDate = dateInfo;
             }
 
+            // 记录最旧(最靠前)的日期
+            if (!oldestDate || dateInfo.timestamp < oldestDate.timestamp) {
+                oldestDate = dateInfo;
+            }
+
             // 检查是否匹配目标
             let isMatch = false;
             if (targetDay) {
                 // 如果指定了具体日期,需要年月日都匹配
-                isMatch = dateInfo.year === targetYear && 
-                         dateInfo.month === targetMonth && 
+                isMatch = dateInfo.year === targetYear &&
+                         dateInfo.month === targetMonth &&
                          dateInfo.day === targetDay;
                 debugLog(`检查动态 #${i}: ${dateInfo.year}-${dateInfo.month}-${dateInfo.day}, 目标: ${targetYear}-${targetMonth}-${targetDay}, 匹配: ${isMatch}`);
             } else {
                 // 如果没指定日期,只需要年月匹配
-                isMatch = dateInfo.year === targetYear && 
+                isMatch = dateInfo.year === targetYear &&
                          dateInfo.month === targetMonth;
                 debugLog(`检查动态 #${i}: ${dateInfo.year}-${dateInfo.month}, 目标: ${targetYear}-${targetMonth}, 匹配: ${isMatch}`);
             }
 
+            // 如果找到匹配项,立即返回
             if (isMatch) {
                 targetCard = card;
                 targetDate = dateInfo;
-                const dateStr = targetDay 
+                const dateStr = targetDay
                     ? `${dateInfo.year}年${dateInfo.month}月${dateInfo.day}日`
                     : `${dateInfo.year}年${dateInfo.month}月`;
                 debugLog(`🎯 找到目标! ${dateStr}`);
                 return { found: true, targetCard, targetDate, latestDate };
             }
+        }
 
-            // 检查是否已超过目标(时间更早)
+        // 第二步:如果没找到匹配项,检查是否已经超过目标时间
+        // 判断依据:最旧的那条动态的时间是否早于目标时间
+        if (oldestDate) {
+            let hasPassed = false;
             if (targetDay) {
                 // 指定了日期的情况:需要比较到日
-                if (dateInfo.year < targetYear || 
-                    (dateInfo.year === targetYear && dateInfo.month < targetMonth) ||
-                    (dateInfo.year === targetYear && dateInfo.month === targetMonth && dateInfo.day < targetDay)) {
-                    debugLog(`⚠️ 已超过目标时间: ${dateInfo.year}年${dateInfo.month}月${dateInfo.day}日`);
-                    return { found: false, passed: true, passedDate: dateInfo, latestDate };
-                }
+                hasPassed = oldestDate.year < targetYear ||
+                    (oldestDate.year === targetYear && oldestDate.month < targetMonth) ||
+                    (oldestDate.year === targetYear && oldestDate.month === targetMonth && oldestDate.day < targetDay);
             } else {
                 // 未指定日期的情况:只比较到月
-                if (dateInfo.year < targetYear || 
-                    (dateInfo.year === targetYear && dateInfo.month < targetMonth)) {
-                    debugLog(`⚠️ 已超过目标时间: ${dateInfo.year}年${dateInfo.month}月`);
-                    return { found: false, passed: true, passedDate: dateInfo, latestDate };
-                }
+                hasPassed = oldestDate.year < targetYear ||
+                    (oldestDate.year === targetYear && oldestDate.month < targetMonth);
+            }
+
+            if (hasPassed) {
+                debugLog(`⚠️ 已超过目标时间: 最旧动态为 ${oldestDate.year}年${oldestDate.month}月${oldestDate.day}日`);
+                return { found: false, passed: true, passedDate: oldestDate, latestDate };
             }
         }
 
+        // 既没找到,也没超过,继续滚动
         return { found: false, passed: false, latestDate };
     }
 
@@ -827,8 +836,8 @@
     init();
 
     debugLog('========================================');
-    debugLog('B站动态日期跳转助手 v1.0.1 已启动');
+    debugLog('B站动态日期跳转助手 v1.0.2 已启动');
     debugLog('新特性: 支持可选的具体日期匹配');
     debugLog('========================================');
-    console.log('%c[动态跳转] 脚本v1.0.1已加载! 现在支持精确到日期', 'color: #667eea; font-size: 14px; font-weight: bold; background: #f0f4ff; padding: 4px 8px; border-radius: 4px;');
+    console.log('%c[动态跳转] 脚本v1.0.2已加载! 现在支持精确到日期', 'color: #667eea; font-size: 14px; font-weight: bold; background: #f0f4ff; padding: 4px 8px; border-radius: 4px;');
 })();
