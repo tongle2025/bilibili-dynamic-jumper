@@ -2,8 +2,8 @@
 // @name         哔哩哔哩动态日期跳转助手
 // @name:en      Bilibili Dynamic Time Jumper
 // @namespace    https://github.com/tongle2025/bilibili-dynamic-jumper
-// @version      1.3.0
-// @description  快速跳转到B站UP主指定日期/年月的历史动态，支持自定义日历选择、自动跟随B站官方与Bilibili-Evolved深色模式、定位当日最早动态、已加载动态即时跳转与同日多条切换
+// @version      1.5.0
+// @description  快速跳转到B站UP主指定日期/年月的历史动态，支持自定义日历选择、自动跟随B站官方与Bilibili-Evolved深色模式、省内存模式、命中结果列表直达与定位当日最早动态
 // @description:en Quickly jump to Bilibili UP master's dynamics at specified date
 // @author       Sakurakid
 // @match        https://space.bilibili.com/*/dynamic*
@@ -23,7 +23,8 @@
         scrollDelay: 2000,
         scrollAggressiveness: 'aggressive',
         extraScroll: 2000,
-        themeMode: 'auto' // 'auto' | 'light' | 'dark'
+        memorySaver: true,
+        themeMode: 'auto'  // 'auto' | 'light' | 'dark'
     };
 
     const STORAGE_KEY = 'bilibili_dynamic_jumper_settings';
@@ -36,6 +37,7 @@
     let currentRetries = 0;
     let lastDynamicCount = 0;
     let totalScrolls = 0;
+    let prunedCardCount = 0;
 
     // 日历选择器状态（默认今日）
     const initNow = new Date();
@@ -56,8 +58,12 @@
     const pendingTimers = new Set();
 
     // 匹配结果（按页面从上到下，即从晚到早排列）与高亮状态
+    let allMatchedResults = [];
     let matchedResults = [];
+    let currentAuthorFilter = '';
+    let authorFilterTimer = null;
     let currentMatchIndex = -1;
+    let oldestLoadedDateInfo = null;
     let currentHighlightedCard = null;
     let currentHighlightOriginalStyle = null;
     let currentHighlightIsApprox = false;
@@ -91,6 +97,7 @@
             const scrollDelayEl = document.getElementById('scroll-delay');
             const aggEl = document.getElementById('scroll-aggressiveness');
             const extraScrollEl = document.getElementById('extra-scroll');
+            const memSaverEl = document.getElementById('memory-saver-toggle');
             const themeEl = document.getElementById('theme-mode-select');
 
             const current = loadSettings();
@@ -99,6 +106,7 @@
                 scrollDelay: scrollDelayEl ? (parseInt(scrollDelayEl.value, 10) || DEFAULT_SETTINGS.scrollDelay) : current.scrollDelay,
                 scrollAggressiveness: aggEl ? (aggEl.value || DEFAULT_SETTINGS.scrollAggressiveness) : current.scrollAggressiveness,
                 extraScroll: extraScrollEl ? parseInt(extraScrollEl.value, 10) : current.extraScroll,
+                memorySaver: memSaverEl ? Boolean(memSaverEl.checked) : current.memorySaver,
                 themeMode: themeEl ? (themeEl.value || DEFAULT_SETTINGS.themeMode) : current.themeMode
             };
             if (isNaN(settings.extraScroll)) settings.extraScroll = DEFAULT_SETTINGS.extraScroll;
@@ -808,6 +816,87 @@
                 text-decoration: underline;
             }
 
+            /* 匹配结果列表 */
+            #dynamic-jumper-panel .bdj-result-list {
+                display: flex;
+                flex-direction: column;
+                max-height: 440px;
+                overflow-y: auto;
+                border: 1px solid var(--bdj-border);
+                border-radius: 4px;
+                background: var(--bdj-surface);
+            }
+            #dynamic-jumper-panel .bdj-result-item {
+                width: 100%;
+                display: flex;
+                flex-direction: column;
+                gap: 3px;
+                padding: 7px 9px;
+                border: none;
+                border-left: 2px solid transparent;
+                border-bottom: 1px solid var(--bdj-divider);
+                background: transparent;
+                text-align: left;
+                color: inherit;
+                font-family: inherit;
+                cursor: pointer;
+                transition: background-color 0.12s, border-color 0.12s;
+            }
+            #dynamic-jumper-panel .bdj-result-item:last-child {
+                border-bottom: none;
+            }
+            #dynamic-jumper-panel .bdj-result-item:hover {
+                background: var(--bdj-surface-hover);
+            }
+            #dynamic-jumper-panel .bdj-result-item.is-active {
+                background: var(--bdj-success-bg);
+                border-left-color: var(--bdj-accent);
+            }
+            #dynamic-jumper-panel .bdj-result-item-head {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 6px;
+                font-size: 11px;
+                color: var(--bdj-muted);
+            }
+            #dynamic-jumper-panel .bdj-result-tag {
+                padding: 0 5px;
+                border-radius: 3px;
+                font-size: 11px;
+                font-weight: 500;
+                color: #ffffff;
+                background: var(--bdj-accent);
+            }
+            #dynamic-jumper-panel .bdj-result-summary {
+                font-size: 12px;
+                color: var(--bdj-text);
+                line-height: 1.45;
+                display: -webkit-box;
+                -webkit-line-clamp: 2;
+                -webkit-box-orient: vertical;
+                overflow: hidden;
+                word-break: break-word;
+            }
+
+            #dynamic-jumper-panel .bdj-result-empty {
+                padding: 14px 10px;
+                text-align: center;
+                font-size: 12px;
+                color: var(--bdj-muted);
+            }
+            #dynamic-jumper-panel .bdj-filter-row {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+            }
+            #dynamic-jumper-panel .bdj-filter-input {
+                flex: 1;
+                height: 26px;
+                padding: 0 8px;
+                font-size: 12px;
+            }
+
             /* 目标动态徽章 */
             .bili-jumper-badge {
                 position: absolute;
@@ -1112,11 +1201,6 @@
             <div class="bdj-body">
                 <!-- 标签 1：跳转 -->
                 <div class="bdj-pane is-active" data-pane="jump">
-                    <div class="bdj-section-head">
-                        <span>日期跳转</span>
-                        <span class="bdj-head-meta">默认定位最早一条</span>
-                    </div>
-
                     <div class="bdj-date-wrap">
                         <button type="button" id="bdj-date-trigger" class="bdj-date-trigger">
                             <span id="bdj-date-display">${selectedYear}-${pad2(selectedMonth)}-${pad2(selectedDay)}</span>
@@ -1140,30 +1224,37 @@
                         </label>
                     </div>
 
+                    <div class="bdj-row-between">
+                        <label class="bdj-check" title="释放已滑过动态的图片与渲染层，反向查回时自动还原">
+                            <input type="checkbox" id="memory-saver-toggle"${savedSettings.memorySaver ? ' checked' : ''}>
+                            <span>省内存模式</span>
+                        </label>
+                        <span class="bdj-meta">大量载入时建议开启</span>
+                    </div>
+
                     <!-- 运行状态 -->
                     <div id="progress-info" style="display: none; flex-direction: column; gap: 6px;">
                         <div class="bdj-meta">
                             当前位置: <strong id="current-date">—</strong> ·
+                            最早已加载: <strong id="oldest-loaded-date">—</strong> ·
                             已加载 <strong id="loaded-count">0</strong> 条 ·
                             滚动 <strong id="scroll-count">0</strong> 次 ·
-                            重试 <strong id="retry-count">0</strong>/<span id="max-retry-display">${savedSettings.maxRetries}</span>
+                            重试 <strong id="retry-count">0</strong>/<span id="max-retry-display">${savedSettings.maxRetries}</span><span id="pruned-meta" style="display: none;"> · 已释放 <strong id="pruned-count">0</strong> 条图片</span>
                         </div>
                         <div id="status-msg" class="bdj-status">等待开始</div>
                     </div>
 
-                    <!-- 匹配结果导航 -->
-                    <div id="match-nav-bar" style="display: none; flex-direction: column; gap: 8px;">
+                    <!-- 匹配结果列表 -->
+                    <div id="match-nav-bar" style="display: none; flex-direction: column; gap: 6px;">
                         <div class="bdj-section-head">
                             <span>匹配结果</span>
                             <span id="match-nav-summary" class="bdj-head-meta">0 条</span>
                         </div>
-                        <div class="bdj-row-between">
-                            <div class="bdj-row">
-                                <button type="button" id="match-prev-btn" class="bdj-btn">更晚一条</button>
-                                <button type="button" id="match-next-btn" class="bdj-btn">更早一条</button>
-                            </div>
-                            <span id="match-counter" class="bdj-meta">1 / 1</span>
+                        <div class="bdj-filter-row">
+                            <input type="text" id="match-author-filter" class="bdj-input bdj-filter-input" placeholder="按 UP 主名字筛选...">
+                            <button type="button" id="match-filter-clear" class="bdj-btn bdj-btn-sm bdj-btn-muted" style="display: none;">清空</button>
                         </div>
+                        <div id="match-result-list" class="bdj-result-list"></div>
                     </div>
                 </div>
 
@@ -1212,11 +1303,8 @@
                         <span>px</span>
                     </div>
 
-                    <div class="bdj-meta">
-                        搜索几年前的早期动态时，建议调大重试次数（20~30）或切换“极限”模式；所有设置均自动保存。
-                    </div>
-
                     <div class="bdj-row">
+                        <button type="button" id="restore-images-btn" class="bdj-btn">还原所有图片</button>
                         <button type="button" id="reset-settings-btn" class="bdj-btn bdj-btn-muted">恢复默认</button>
                     </div>
                 </div>
@@ -1225,13 +1313,13 @@
                 <div class="bdj-pane" data-pane="about">
                     <div class="bdj-section-head">
                         <span>哔哩哔哩动态日期跳转助手</span>
-                        <span class="bdj-head-meta">v1.3.0</span>
+                        <span class="bdj-head-meta">v1.5.0</span>
                     </div>
 
                     <ul class="bdj-about-list">
                         <li>支持已加载动态零滚动前后反复跳转，无需刷新页面。</li>
-                        <li>查找某日/某月动态时会自动加载完整该时段，并默认定位到<strong>最早一条</strong>。</li>
-                        <li>优先读取底层精确时间戳，兜底兼容刚刚/分钟前/小时前/昨天/2~3天前等相对时间。</li>
+                        <li>查找某日/某月动态时会自动加载完整该时段，默认定位到<strong>最早一条</strong>，并在面板列出全部命中动态供单击直达。</li>
+                        <li>内置省内存模式：向下搜索时自动释放已滑过动态的图片与渲染层，反向查回时自动恢复。</li>
                         <li>自动适配 B 站官方深色模式与 Bilibili-Evolved 夜间模式，实时切换。</li>
                     </ul>
 
@@ -1292,6 +1380,18 @@
         document.getElementById('scroll-delay').addEventListener('change', saveSettings);
         document.getElementById('scroll-aggressiveness').addEventListener('change', saveSettings);
         document.getElementById('extra-scroll').addEventListener('change', saveSettings);
+        document.getElementById('memory-saver-toggle').addEventListener('change', (e) => {
+            saveSettings();
+            if (!e.target.checked) {
+                restoreAllPrunedCards();
+            }
+        });
+
+        // 手动还原全部已释放图片
+        document.getElementById('restore-images-btn').addEventListener('click', () => {
+            const restored = restoreAllPrunedCards();
+            debugLog(`已手动还原 ${restored} 条动态图片`);
+        });
 
         // 恢复默认设置
         document.getElementById('reset-settings-btn').addEventListener('click', () => {
@@ -1299,22 +1399,46 @@
             document.getElementById('scroll-delay').value = DEFAULT_SETTINGS.scrollDelay;
             document.getElementById('scroll-aggressiveness').value = DEFAULT_SETTINGS.scrollAggressiveness;
             document.getElementById('extra-scroll').value = DEFAULT_SETTINGS.extraScroll;
+            document.getElementById('memory-saver-toggle').checked = DEFAULT_SETTINGS.memorySaver;
             document.getElementById('theme-mode-select').value = DEFAULT_SETTINGS.themeMode;
             saveSettings();
             applyTheme(true);
         });
 
-        // 搜索、停止、清除高亮与结果切换
+        // 搜索、停止与清除高亮
         document.getElementById('start-jump').addEventListener('click', startJump);
         document.getElementById('stop-jump').addEventListener('click', () => stopJump('已手动停止'));
         document.getElementById('clear-highlight-btn').addEventListener('click', () => {
             clearHighlight();
+            allMatchedResults = [];
             matchedResults = [];
             currentMatchIndex = -1;
+            currentAuthorFilter = '';
+            const filterInput = document.getElementById('match-author-filter');
+            const filterClearBtn = document.getElementById('match-filter-clear');
+            if (filterInput) filterInput.value = '';
+            if (filterClearBtn) filterClearBtn.style.display = 'none';
             updateMatchNavUI();
         });
-        document.getElementById('match-prev-btn').addEventListener('click', () => navigateMatch(-1));
-        document.getElementById('match-next-btn').addEventListener('click', () => navigateMatch(1));
+
+        // 按 UP 主名字筛选
+        const filterInput = document.getElementById('match-author-filter');
+        const filterClearBtn = document.getElementById('match-filter-clear');
+        filterInput.addEventListener('input', () => {
+            const val = filterInput.value.trim();
+            filterClearBtn.style.display = val ? 'inline-flex' : 'none';
+            if (authorFilterTimer) clearTimeout(authorFilterTimer);
+            authorFilterTimer = setTimeout(() => {
+                authorFilterTimer = null;
+                applyAuthorFilter(val);
+            }, 120);
+        });
+        filterClearBtn.addEventListener('click', () => {
+            filterInput.value = '';
+            filterClearBtn.style.display = 'none';
+            if (authorFilterTimer) clearTimeout(authorFilterTimer);
+            applyAuthorFilter('');
+        });
 
         // 收起面板
         document.getElementById('hide-panel').addEventListener('click', () => {
@@ -1622,44 +1746,372 @@
         };
     }
 
-    // ==================== 搜索控制与高亮 ====================
+    // ==================== 省内存模式（释放/还原已滑过动态图片与渲染层） ====================
 
-    function updateMatchNavUI() {
-        const navBar = document.getElementById('match-nav-bar');
-        const clearBtn = document.getElementById('clear-highlight-btn');
-        if (!navBar) return;
+    function updatePrunedMetaUI() {
+        const wrap = document.getElementById('pruned-meta');
+        const countEl = document.getElementById('pruned-count');
+        if (!wrap || !countEl) return;
+        if (prunedCardCount > 0) {
+            wrap.style.display = 'inline';
+            countEl.textContent = String(prunedCardCount);
+        } else {
+            wrap.style.display = 'none';
+        }
+    }
 
-        if (clearBtn) {
-            clearBtn.style.display = currentHighlightedCard ? 'inline-flex' : 'none';
+    function pruneCardMemory(card) {
+        if (!card || card.dataset.bdjPruned === '1') return false;
+        try {
+            const rect = card.getBoundingClientRect();
+            const measuredH = rect && rect.height > 40 ? Math.round(rect.height) : 240;
+
+            card.querySelectorAll('img').forEach(img => {
+                if (img.hasAttribute('src') && !img.dataset.bdjOrigSrc) {
+                    img.dataset.bdjOrigSrc = img.getAttribute('src') || '';
+                    img.removeAttribute('src');
+                }
+                if (img.hasAttribute('srcset') && !img.dataset.bdjOrigSrcset) {
+                    img.dataset.bdjOrigSrcset = img.getAttribute('srcset') || '';
+                    img.removeAttribute('srcset');
+                }
+            });
+
+            card.querySelectorAll('source').forEach(srcEl => {
+                if (srcEl.hasAttribute('srcset') && !srcEl.dataset.bdjOrigSrcset) {
+                    srcEl.dataset.bdjOrigSrcset = srcEl.getAttribute('srcset') || '';
+                    srcEl.removeAttribute('srcset');
+                }
+            });
+
+            card.querySelectorAll('video').forEach(video => {
+                try { video.pause(); } catch (e) {}
+                if (video.hasAttribute('src') && !video.dataset.bdjOrigSrc) {
+                    video.dataset.bdjOrigSrc = video.getAttribute('src') || '';
+                    video.removeAttribute('src');
+                    try { video.load(); } catch (e) {}
+                }
+            });
+
+            card.dataset.bdjOrigCv = card.style.contentVisibility || '';
+            card.dataset.bdjOrigCis = card.style.containIntrinsicSize || '';
+            card.style.contentVisibility = 'hidden';
+            card.style.containIntrinsicSize = `auto ${measuredH}px`;
+            card.dataset.bdjPruned = '1';
+            prunedCardCount++;
+            return true;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function restoreCardMemory(card) {
+        if (!card || card.dataset.bdjPruned !== '1') return false;
+        try {
+            card.querySelectorAll('img').forEach(img => {
+                if (img.dataset.bdjOrigSrc !== undefined) {
+                    if (img.dataset.bdjOrigSrc) img.setAttribute('src', img.dataset.bdjOrigSrc);
+                    delete img.dataset.bdjOrigSrc;
+                }
+                if (img.dataset.bdjOrigSrcset !== undefined) {
+                    if (img.dataset.bdjOrigSrcset) img.setAttribute('srcset', img.dataset.bdjOrigSrcset);
+                    delete img.dataset.bdjOrigSrcset;
+                }
+            });
+
+            card.querySelectorAll('source').forEach(srcEl => {
+                if (srcEl.dataset.bdjOrigSrcset !== undefined) {
+                    if (srcEl.dataset.bdjOrigSrcset) srcEl.setAttribute('srcset', srcEl.dataset.bdjOrigSrcset);
+                    delete srcEl.dataset.bdjOrigSrcset;
+                }
+            });
+
+            card.querySelectorAll('video').forEach(video => {
+                if (video.dataset.bdjOrigSrc !== undefined) {
+                    if (video.dataset.bdjOrigSrc) video.setAttribute('src', video.dataset.bdjOrigSrc);
+                    delete video.dataset.bdjOrigSrc;
+                }
+            });
+
+            card.style.contentVisibility = card.dataset.bdjOrigCv || '';
+            card.style.containIntrinsicSize = card.dataset.bdjOrigCis || '';
+            delete card.dataset.bdjOrigCv;
+            delete card.dataset.bdjOrigCis;
+            delete card.dataset.bdjPruned;
+            prunedCardCount = Math.max(0, prunedCardCount - 1);
+            return true;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function restoreAllPrunedCards() {
+        const cards = document.querySelectorAll('.bili-dyn-item[data-bdj-pruned="1"]');
+        let count = 0;
+        cards.forEach(card => {
+            if (restoreCardMemory(card)) count++;
+        });
+        prunedCardCount = 0;
+        updatePrunedMetaUI();
+        return count;
+    }
+
+    // 还原目标卡片及其前后相邻若干条动态的图片，确保浏览上下文清晰完整
+    function restoreAroundCard(targetCard, radius = 6) {
+        if (!targetCard) return;
+        const allCards = document.querySelectorAll('.bili-dyn-item');
+        let idx = -1;
+        for (let i = 0; i < allCards.length; i++) {
+            if (allCards[i] === targetCard) {
+                idx = i;
+                break;
+            }
+        }
+        if (idx === -1) {
+            restoreCardMemory(targetCard);
+            updatePrunedMetaUI();
+            return;
+        }
+        const start = Math.max(0, idx - radius);
+        const end = Math.min(allCards.length - 1, idx + radius);
+        for (let i = start; i <= end; i++) {
+            restoreCardMemory(allCards[i]);
+        }
+        updatePrunedMetaUI();
+    }
+
+    // 向下滚动过程中，释放距离底部较远且早于/晚于目标（严格晚于目标日期）的已滑过卡片图片
+    function prunePassedUpperCards(dynamicCards) {
+        const memToggle = document.getElementById('memory-saver-toggle');
+        if (!memToggle || !memToggle.checked) return;
+
+        // 保留最底部 24 条不释放，防止影响当前懒加载与目标附近视图
+        const safeTail = 24;
+        if (dynamicCards.length <= safeTail) return;
+
+        const hasDay = targetDay !== null;
+        const targetKey = makeDateKey(targetYear, targetMonth, targetDay || 1, hasDay);
+        const limit = dynamicCards.length - safeTail;
+
+        for (let i = 0; i < limit; i++) {
+            const card = dynamicCards[i];
+            if (card.dataset.bdjPruned === '1') continue;
+            if (isPinnedDynamic(card)) continue;
+            const dateInfo = extractDateInfo(card);
+            if (!dateInfo) continue;
+
+            const cardCompareKey = makeDateKey(dateInfo.year, dateInfo.month, dateInfo.day, hasDay);
+            if (cardCompareKey > targetKey) {
+                pruneCardMemory(card);
+            }
+        }
+        updatePrunedMetaUI();
+    }
+
+    // ==================== 匹配结果摘要提取与列表渲染 ====================
+
+    function extractCardSummary(card) {
+        try {
+            const vueData = getVueDynamicData(card);
+            if (vueData && vueData.modules) {
+                const dyn = vueData.modules.module_dynamic;
+                const descText = dyn && dyn.desc && dyn.desc.text ? dyn.desc.text.trim() : '';
+                const major = dyn && dyn.major;
+                const type = major && major.type;
+                if (descText) {
+                    const clean = descText.replace(/\s+/g, ' ');
+                    return clean.length > 80 ? clean.slice(0, 80) + '…' : clean;
+                }
+                if (type === 'MAJOR_TYPE_OPUS' && major.opus) {
+                    const title = major.opus.title ? major.opus.title.trim() : '';
+                    const text = major.opus.summary && major.opus.summary.text
+                        ? major.opus.summary.text.replace(/\s+/g, ' ').trim()
+                        : '';
+                    const combined = title && text ? `${title} - ${text}` : (title || text);
+                    if (combined) return combined.length > 80 ? combined.slice(0, 80) + '…' : combined;
+                }
+                if (type === 'MAJOR_TYPE_ARCHIVE' && major.archive && major.archive.title) {
+                    return `投稿视频：${major.archive.title}`;
+                }
+                if (type === 'MAJOR_TYPE_DRAW') {
+                    const count = (major.draw && major.draw.items && major.draw.items.length) || 0;
+                    return `图文动态（${count} 张图片）`;
+                }
+                if (type === 'MAJOR_TYPE_ARTICLE' && major.article && major.article.title) {
+                    return `专栏：${major.article.title}`;
+                }
+                if (vueData.orig && vueData.orig.modules) {
+                    const origDyn = vueData.orig.modules.module_dynamic;
+                    const origText = origDyn && origDyn.desc && origDyn.desc.text ? origDyn.desc.text.replace(/\s+/g, ' ').trim() : '';
+                    if (origText) return `转发：${origText.length > 74 ? origText.slice(0, 74) + '…' : origText}`;
+                }
+            }
+
+            // DOM 文本兜底提取
+            const selectors = [
+                '.bili-rich-text__content',
+                '.dyn-card-opus__title',
+                '.dyn-card-opus__summary',
+                '.bili-dyn-card-video__title',
+                '.bili-dyn-card-article__title',
+                '.bili-dyn-content__orig__desc'
+            ];
+            for (const sel of selectors) {
+                const el = card.querySelector(sel);
+                if (el && el.textContent) {
+                    const text = el.textContent.replace(/\s+/g, ' ').trim();
+                    if (text) return text.length > 80 ? text.slice(0, 80) + '…' : text;
+                }
+            }
+        } catch (e) {
+            // 忽略异常
+        }
+        return '（无文字内容）';
+    }
+
+    function extractCardAuthor(card) {
+        try {
+            const vueData = getVueDynamicData(card);
+            const vueName = vueData && vueData.modules && vueData.modules.module_author && vueData.modules.module_author.name;
+            if (vueName && String(vueName).trim()) {
+                return String(vueName).trim();
+            }
+
+            const selectors = [
+                '.bili-dyn-title__text',
+                '.bili-dyn-title',
+                '.bili-dyn-author__name',
+                '[class*="dyn-title"]'
+            ];
+            for (const sel of selectors) {
+                const el = card.querySelector(sel);
+                if (el && el.textContent) {
+                    const text = el.textContent.replace(/\s+/g, ' ').trim();
+                    if (text) return text;
+                }
+            }
+        } catch (e) {
+            // 忽略异常
+        }
+        return '';
+    }
+
+    function formatExactCardTime(dateInfo) {
+        if (!dateInfo) return '未知时间';
+        if (dateInfo.source === 'vue_pub_ts' && dateInfo.timestamp > 1200000000) {
+            const d = new Date(dateInfo.timestamp * 1000);
+            return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+        }
+        return formatDateInfo(dateInfo, true);
+    }
+
+    function updateOldestLoadedDate(dateInfo) {
+        if (!dateInfo) return;
+        oldestLoadedDateInfo = dateInfo;
+        const el = document.getElementById('oldest-loaded-date');
+        if (el) el.textContent = formatDateInfo(dateInfo, true);
+    }
+
+    function applyAuthorFilter(keyword) {
+        currentAuthorFilter = (keyword || '').trim();
+        const lower = currentAuthorFilter.toLowerCase();
+        const prevSelectedCard = (currentMatchIndex >= 0 && matchedResults[currentMatchIndex])
+            ? matchedResults[currentMatchIndex].card
+            : null;
+
+        if (!lower) {
+            matchedResults = allMatchedResults.slice();
+        } else {
+            matchedResults = allMatchedResults.filter(item =>
+                (item.author || '').toLowerCase().includes(lower)
+            );
         }
 
         if (matchedResults.length === 0) {
-            navBar.style.display = 'none';
+            currentMatchIndex = -1;
+        } else {
+            const keptIdx = prevSelectedCard
+                ? matchedResults.findIndex(item => item.card === prevSelectedCard)
+                : -1;
+            currentMatchIndex = keptIdx >= 0 ? keptIdx : matchedResults.length - 1;
+        }
+
+        updateMatchNavUI();
+    }
+
+    function renderMatchList() {
+        const listEl = document.getElementById('match-result-list');
+        if (!listEl) return;
+
+        listEl.innerHTML = '';
+
+        if (allMatchedResults.length === 0) {
             return;
         }
 
-        navBar.style.display = 'flex';
-        const targetDesc = formatDateInfo(
-            { year: targetYear, month: targetMonth, day: targetDay || 1 },
-            Boolean(targetDay)
-        );
-        const isEarliest = currentMatchIndex === matchedResults.length - 1;
-        document.getElementById('match-nav-summary').textContent =
-            `${targetDesc} · 共 ${matchedResults.length} 条${isEarliest ? '（最早）' : ''}`;
-        document.getElementById('match-counter').textContent =
-            `${currentMatchIndex + 1} / ${matchedResults.length}`;
+        if (matchedResults.length === 0) {
+            const empty = document.createElement('div');
+            empty.className = 'bdj-result-empty';
+            empty.textContent = `未找到包含“${currentAuthorFilter}”的 UP 主动态`;
+            listEl.appendChild(empty);
+            return;
+        }
 
-        const prevBtn = document.getElementById('match-prev-btn');
-        const nextBtn = document.getElementById('match-next-btn');
-        const single = matchedResults.length <= 1;
-        prevBtn.disabled = single;
-        nextBtn.disabled = single;
+        const frag = document.createDocumentFragment();
+        // 列表按从早到晚排列（最早一条在最上方），方便浏览并单击跳转
+        for (let displayIdx = 0; displayIdx < matchedResults.length; displayIdx++) {
+            const resultIdx = matchedResults.length - 1 - displayIdx;
+            const item = matchedResults[resultIdx];
+            const isActive = resultIdx === currentMatchIndex;
+
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = isActive ? 'bdj-result-item is-active' : 'bdj-result-item';
+
+            const head = document.createElement('div');
+            head.className = 'bdj-result-item-head';
+
+            const leftSpan = document.createElement('span');
+            const dateStr = formatExactCardTime(item.dateInfo);
+            leftSpan.textContent = item.author ? `${dateStr} · ${item.author}` : dateStr;
+            leftSpan.style.overflow = 'hidden';
+            leftSpan.style.textOverflow = 'ellipsis';
+            leftSpan.style.whiteSpace = 'nowrap';
+            head.appendChild(leftSpan);
+
+            if (displayIdx === 0) {
+                const tag = document.createElement('span');
+                tag.className = 'bdj-result-tag';
+                tag.textContent = matchedResults.length > 1 ? '最早' : '命中';
+                head.appendChild(tag);
+            } else {
+                const numSpan = document.createElement('span');
+                numSpan.textContent = `#${displayIdx + 1}`;
+                head.appendChild(numSpan);
+            }
+
+            const summary = document.createElement('div');
+            summary.className = 'bdj-result-summary';
+            summary.textContent = item.summary || '（无文字内容）';
+
+            btn.appendChild(head);
+            btn.appendChild(summary);
+
+            btn.addEventListener('click', () => {
+                selectMatchByIndex(resultIdx);
+            });
+
+            frag.appendChild(btn);
+        }
+        listEl.appendChild(frag);
     }
 
-    function navigateMatch(delta) {
+    function selectMatchByIndex(index) {
         if (matchedResults.length === 0) return;
-        currentMatchIndex = (currentMatchIndex + delta + matchedResults.length) % matchedResults.length;
+        currentMatchIndex = ((index % matchedResults.length) + matchedResults.length) % matchedResults.length;
         const item = matchedResults[currentMatchIndex];
+        restoreAroundCard(item.card);
+
         const isEarliest = currentMatchIndex === matchedResults.length - 1;
         let badgeText;
         if (matchedResults.length > 1) {
@@ -1672,6 +2124,41 @@
         highlightTargetDynamic(item.card, badgeText);
         document.getElementById('current-date').textContent = formatDateInfo(item.dateInfo, true);
         updateMatchNavUI();
+    }
+
+    // ==================== 搜索控制与高亮 ====================
+
+    function updateMatchNavUI() {
+        const navBar = document.getElementById('match-nav-bar');
+        const clearBtn = document.getElementById('clear-highlight-btn');
+        if (!navBar) return;
+
+        if (clearBtn) {
+            clearBtn.style.display = currentHighlightedCard ? 'inline-flex' : 'none';
+        }
+
+        if (allMatchedResults.length === 0) {
+            navBar.style.display = 'none';
+            renderMatchList();
+            return;
+        }
+
+        navBar.style.display = 'flex';
+        const targetDesc = formatDateInfo(
+            { year: targetYear, month: targetMonth, day: targetDay || 1 },
+            Boolean(targetDay)
+        );
+        const isEarliest = matchedResults.length > 0 && currentMatchIndex === matchedResults.length - 1;
+
+        if (currentAuthorFilter) {
+            document.getElementById('match-nav-summary').textContent =
+                `${targetDesc} · 筛选 ${matchedResults.length}/${allMatchedResults.length} 条`;
+        } else {
+            document.getElementById('match-nav-summary').textContent =
+                `${targetDesc} · 共 ${allMatchedResults.length} 条${isEarliest ? '（最早）' : ''}`;
+        }
+
+        renderMatchList();
     }
 
     function updateStatus(msg, tone = 'normal') {
@@ -1715,8 +2202,14 @@
         isSearching = true;
         currentRetries = 0;
         totalScrolls = 0;
+        allMatchedResults = [];
         matchedResults = [];
         currentMatchIndex = -1;
+        currentAuthorFilter = '';
+        const filterInput = document.getElementById('match-author-filter');
+        const filterClearBtn = document.getElementById('match-filter-clear');
+        if (filterInput) filterInput.value = '';
+        if (filterClearBtn) filterClearBtn.style.display = 'none';
         updateMatchNavUI();
 
         document.getElementById('start-jump').style.display = 'none';
@@ -1737,6 +2230,7 @@
             if (scanResult.oldestDate) {
                 document.getElementById('current-date').textContent =
                     formatDateInfo(scanResult.oldestDate, true);
+                updateOldestLoadedDate(scanResult.oldestDate);
             }
 
             if (scanResult.passed) {
@@ -1780,10 +2274,16 @@
         document.getElementById('start-jump').style.display = 'inline-flex';
         document.getElementById('stop-jump').style.display = 'none';
 
-        matchedResults = matches;
+        allMatchedResults = matches.map(m => Object.assign({}, m, {
+            author: extractCardAuthor(m.card),
+            summary: extractCardSummary(m.card)
+        }));
+        matchedResults = allMatchedResults.slice();
         currentMatchIndex = matchedResults.length - 1;
 
         const earliest = matchedResults[currentMatchIndex];
+        restoreAroundCard(earliest.card);
+
         const badgeText = matchedResults.length > 1
             ? `最早一条 (${currentMatchIndex + 1}/${matchedResults.length})`
             : '目标动态';
@@ -1814,6 +2314,7 @@
 
         if (scanResult.closestCard && scanResult.closestDate) {
             const closestDesc = formatDateInfo(scanResult.closestDate, true);
+            restoreAroundCard(scanResult.closestCard);
             highlightTargetDynamic(scanResult.closestCard, `最接近 (${closestDesc})`, true);
             updateMatchNavUI();
             document.getElementById('current-date').textContent = closestDesc;
@@ -1934,6 +2435,7 @@
             if (fullScan.oldestDate) {
                 document.getElementById('current-date').textContent =
                     formatDateInfo(fullScan.oldestDate, true);
+                updateOldestLoadedDate(fullScan.oldestDate);
             }
 
             if (fullScan.passed) {
@@ -1952,6 +2454,9 @@
                 );
                 updateStatus(`已找到 ${fullScan.matches.length} 条 ${targetDesc} 动态，继续向下查找更早的同日动态...`);
             }
+
+            // 省内存模式：释放远在上方且已滑过（严格晚于目标日期）的动态图片与渲染层
+            prunePassedUpperCards(dynamicCards);
         }
 
         scheduleTimer(autoScroll, 500);
@@ -2049,5 +2554,5 @@
 
     init();
 
-    debugLog('哔哩哔哩动态日期跳转助手 v1.3.0 已启动');
+    debugLog('哔哩哔哩动态日期跳转助手 v1.5.0 已启动');
 })();
